@@ -3,6 +3,8 @@
 
     <application
         android:label="Rest"
+        android:icon="@drawable/ic_launcher"
+        android:banner="@drawable/ic_launcher"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
 
         <activity
