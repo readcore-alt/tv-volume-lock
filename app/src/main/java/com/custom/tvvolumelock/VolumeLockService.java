@@ -8,8 +8,8 @@ import android.view.accessibility.AccessibilityEvent;
 
 public class VolumeLockService extends AccessibilityService {
 
-    // === AQUÍ DEFINES EL LÍMITE MÁXIMO DE VOLUMEN (0 a 100) ===
-    private static final int LIMITE_MAXIMO = 25; 
+    // === AQUÍ DEFINES EL PORCENTAJE MÁXIMO (ejemplo: 25% o 30%) ===
+    private static final int PORCENTAJE_MAXIMO = 25; 
 
     @Override
     public boolean onKeyEvent(KeyEvent event) {
@@ -17,9 +17,13 @@ public class VolumeLockService extends AccessibilityService {
             AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
             if (audioManager != null) {
                 int volumenActual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+                int volumenMaximo = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
 
-                // Si ya llegó al límite o lo supera, destruye la señal (retorna true)
-                if (volumenActual >= LIMITE_MAXIMO) {
+                // Calculamos el porcentaje real (de 0 a 100%)
+                int porcentajeActual = (volumenActual * 100) / volumenMaximo;
+
+                // Si ya llegó al porcentaje fijado (ej. 25%), corta la tecla:
+                if (porcentajeActual >= PORCENTAJE_MAXIMO) {
                     return true;
                 }
             }
