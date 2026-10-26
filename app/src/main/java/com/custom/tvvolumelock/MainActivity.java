@@ -24,26 +24,28 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        
-        // Quitar cualquier barra restante y poner pantalla completa real
+
+        // Pantalla completa total (sin barra superior de Android)
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().setFlags(
+            WindowManager.LayoutParams.FLAG_FULLSCREEN,
+            WindowManager.LayoutParams.FLAG_FULLSCREEN
+        );
 
         skyView = new NightSkyView(this);
         setContentView(skyView);
     }
 
-    // Detector infalible de 5 toques en el móvil:
+    // Captura cualquier toque físico en el cristal (móvil)
     @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        if (event.getAction() == MotionEvent.ACTION_DOWN) {
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
             registrarToqueSecreto();
-            return true;
         }
-        return super.onTouchEvent(event);
+        return super.dispatchTouchEvent(ev);
     }
 
-    // Detector de 5 pulsaciones de la tecla OK en el control de la tele:
+    // Captura el botón OK / Enter del control remoto (TV)
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
@@ -53,31 +55,36 @@ public class MainActivity extends Activity {
         return super.onKeyDown(keyCode, event);
     }
 
+    // Contador silencioso: no muestra avisos ni pistas
     private void registrarToqueSecreto() {
         long now = System.currentTimeMillis();
-        // Si tocas antes de que pasen 3 segundos entre toques, suma:
-        if (now - lastClickTime < 3000) {
+        if (now - lastClickTime < 2500) {
             clickCount++;
         } else {
             clickCount = 1;
         }
         lastClickTime = now;
 
+        // Solo salta si llegas a 5 toques seguidos
         if (clickCount >= 5) {
             clickCount = 0;
             try {
                 Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(intent);
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                try {
+                    startActivity(new Intent(Settings.ACTION_SETTINGS));
+                } catch (Exception ignored) {}
+            }
         }
     }
 
-    // Vista con cielo y estrellas con titileo suave
+    // Vista decorativa del cielo nocturno con titileo ultra liviano
     private static class NightSkyView extends View {
         private final Paint starPaint = new Paint();
         private final Paint textPaint = new Paint();
-        private final float[][] stars = new float[70][4]; // X, Y, Radio base, Fase brillo
+        private final float[][] stars = new float[70][4]; // X, Y, Radio base, Fase
 
         public NightSkyView(Context context) {
             super(context);
@@ -94,30 +101,32 @@ public class MainActivity extends Activity {
                 stars[i][0] = random.nextFloat();
                 stars[i][1] = random.nextFloat();
                 stars[i][2] = 1.0f + random.nextFloat() * 2.2f;
-                stars[i][3] = random.nextFloat() * 6.28f; // Fase inicial
+                stars[i][3] = random.nextFloat() * 6.28f;
             }
         }
 
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            canvas.drawColor(Color.parseColor("#050813")); // Azul noche
+            // Fondo azul noche profundo
+            canvas.drawColor(Color.parseColor("#050813"));
 
             int w = getWidth();
             int h = getHeight();
             long time = System.currentTimeMillis();
 
-            // Dibujar estrellas con brillo tenue
+            // Dibujar las estrellas con brillo suave
             for (float[] star : stars) {
                 float alpha = (float) ((Math.sin(time * 0.002 + star[3]) + 1.0) / 2.0);
-                int alphaInt = 70 + (int) (alpha * 185); // Varía de 70 a 255
+                int alphaInt = 70 + (int) (alpha * 185);
                 starPaint.setAlpha(alphaInt);
                 canvas.drawCircle(star[0] * w, star[1] * h, star[2], starPaint);
             }
 
+            // Texto de descanso discreto en la parte inferior
             canvas.drawText("Rest", w / 2f, h * 0.90f, textPaint);
 
-            // Redibuja suavemente a pocos cuadros para no gastar batería
+            // Redibujo suave cada 60ms para no calentar ni gastar energía
             postInvalidateDelayed(60);
         }
     }
