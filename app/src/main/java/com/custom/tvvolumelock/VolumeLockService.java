@@ -38,8 +38,9 @@ public class VolumeLockService extends AccessibilityService {
     };
     private int indiceFlechas = 0;
 
-    // CLAVE 2: Canales (+ - + - - +)
-    private final int[] CODIGO_CANALES = { 1, 2, 1, 2, 2, 1 };
+    // CLAVE 2: Canales (+ - + - + +) -> MISMO PATRÓN
+    // 1 = Canal +, 2 = Canal -
+    private final int[] CODIGO_CANALES = { 1, 2, 1, 2, 1, 1 };
     private int indiceCanales = 0;
 
     private long tiempoUltimaTecla = 0;
@@ -150,7 +151,6 @@ public class VolumeLockService extends AccessibilityService {
         limiteTemporal = obtenerLimite();
         textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
 
-        // RESTAURADO: FLAG_NOT_FOCUSABLE (la tele de fondo conserva el foco completo)
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -252,7 +252,7 @@ public class VolumeLockService extends AccessibilityService {
             }
             tiempoUltimaTecla = ahora;
 
-            // Clave A: Flechas (Arriba / Abajo)
+            // Clave A: Flechas (Arriba, Abajo, Arriba, Abajo, Arriba, Arriba)
             if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (key == CODIGO_FLECHAS[indiceFlechas]) {
                     indiceFlechas++;
@@ -269,7 +269,7 @@ public class VolumeLockService extends AccessibilityService {
                 }
             }
 
-            // Clave B: Canales (+ - + - - +)
+            // Clave B: Canales (+ - + - + +) -> MISMO PATRÓN
             int tipoCanal = 0;
             if (key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP) {
                 tipoCanal = 1;
