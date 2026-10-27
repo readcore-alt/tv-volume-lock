@@ -20,7 +20,18 @@ public class VolumeLockService extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean servicioActivo = true;
 
-    // CAPA 2: Observador directo de la base de datos de sonido (Instantáneo)
+    // Código Secreto: Arriba, Abajo, Arriba, Abajo, Izquierda, Derecha
+    private final int[] CODIGO_GLOBAL = {
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN,
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN,
+        KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_DPAD_RIGHT
+    };
+    private int indiceGlobal = 0;
+    private long tiempoUltimaTecla = 0;
+
     private final ContentObserver volumeObserver = new ContentObserver(handler) {
         @Override
         public void onChange(boolean selfChange) {
@@ -29,7 +40,6 @@ public class VolumeLockService extends AccessibilityService {
         }
     };
 
-    // CAPA 3: Receptor de eventos de cambio de volumen
     private final BroadcastReceiver volumeReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -37,7 +47,6 @@ public class VolumeLockService extends AccessibilityService {
         }
     };
 
-    // CAPA 4: Hilo Centinela de 80ms (Imposible de engañar con pulsaciones rápidas)
     private final Runnable centinelaLoop = new Runnable() {
         @Override
         public void run() {
@@ -52,27 +61,23 @@ public class VolumeLockService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
 
-        // CAPA 1: Preservar permisos sin romper el filtro de teclas
         AccessibilityServiceInfo info = getServiceInfo();
         if (info != null) {
             info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             setServiceInfo(info);
         }
 
-        // Activar Capa 2
         try {
             getContentResolver().registerContentObserver(
                 Settings.System.CONTENT_URI, true, volumeObserver
             );
         } catch (Exception ignored) {}
 
-        // Activar Capa 3
         try {
             IntentFilter filter = new IntentFilter("android.media.VOLUME_CHANGED_ACTION");
             registerReceiver(volumeReceiver, filter);
         } catch (Exception ignored) {}
 
-        // Activar Capa 4
         servicioActivo = true;
         handler.post(centinelaLoop);
     }
@@ -97,9 +102,35 @@ public class VolumeLockService extends AccessibilityService {
         }
     }
 
-    // CAPA 1: Destrucción de la señal física antes de que suba
     @Override
     public boolean onKeyEvent(KeyEvent event) {
+        // 1. Escuchar la combinación secreta en cualquier lugar (solo al presionar hacia abajo)
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            int key = event.getKeyCode();
+            if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN ||
+                key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+
+                long ahora = System.currentTimeMillis();
+                if (ahora - tiempoUltimaTecla > 3500) {
+                    indiceGlobal = 0;
+                }
+                tiempoUltimaTecla = ahora;
+
+                if (key == CODIGO_GLOBAL[indiceGlobal]) {
+                    indiceGlobal++;
+                    if (indiceGlobal == CODIGO_GLOBAL.length) {
+                        indiceGlobal = 0;
+                        abrirPanelDesdeCualquierLugar();
+                    }
+                } else if (key == KeyEvent.KEYCODE_DPAD_UP) {
+                    indiceGlobal = 1;
+                } else {
+                    indiceGlobal = 0;
+                }
+            }
+        }
+
+        // 2. Bloqueo de volumen inquebrantable
         if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) {
             AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
             if (audioManager != null) {
@@ -110,11 +141,18 @@ public class VolumeLockService extends AccessibilityService {
 
                 if (porcentaje >= limite) {
                     forzarLimite();
-                    return true; // Aniquila la tecla
+                    return true;
                 }
             }
         }
         return super.onKeyEvent(event);
+    }
+
+    private void abrirPanelDesdeCualquierLugar() {
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.putExtra("ABRIR_DIRECTO", true);
+        startActivity(intent);
     }
 
     @Override
