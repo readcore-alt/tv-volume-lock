@@ -17,7 +17,6 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -28,26 +27,24 @@ public class VolumeLockService extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean servicioActivo = true;
 
-    // Código: Arriba, Abajo, Arriba, Abajo, Izquierda, Derecha
+    // Código ergonómico: Arriba, Abajo, Arriba, Abajo, Arriba, Arriba
     private final int[] CODIGO_GLOBAL = {
         KeyEvent.KEYCODE_DPAD_UP,
         KeyEvent.KEYCODE_DPAD_DOWN,
         KeyEvent.KEYCODE_DPAD_UP,
         KeyEvent.KEYCODE_DPAD_DOWN,
-        KeyEvent.KEYCODE_DPAD_LEFT,
-        KeyEvent.KEYCODE_DPAD_RIGHT
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_UP
     };
     private int indiceGlobal = 0;
     private long tiempoUltimaTecla = 0;
 
-    // Elementos de la Ventana Flotante (Overlay)
     private WindowManager windowManager;
     private LinearLayout panelOverlay;
     private TextView textoValorOverlay;
     private boolean overlayVisible = false;
     private int limiteTemporal = 25;
 
-    // Auto-cierre de seguridad a los 8 segundos si no tocan nada
     private final Runnable autoCierreRunnable = new Runnable() {
         @Override
         public void run() {
@@ -112,31 +109,30 @@ public class VolumeLockService extends AccessibilityService {
         panelOverlay = new LinearLayout(this);
         panelOverlay.setOrientation(LinearLayout.VERTICAL);
         panelOverlay.setGravity(Gravity.CENTER);
-        panelOverlay.setPadding(80, 50, 80, 50);
+        panelOverlay.setPadding(80, 45, 80, 45);
 
-        // Fondo oscuro translúcido con esquinas redondeadas
         GradientDrawable fondo = new GradientDrawable();
-        fondo.setColor(Color.parseColor("#E6080C1E")); // 90% opaco
-        fondo.setCornerRadius(28f);
-        fondo.setStroke(3, Color.parseColor("#33FFFFFF")); // Borde suave
+        fondo.setColor(Color.parseColor("#E6080C1E"));
+        fondo.setCornerRadius(26f);
+        fondo.setStroke(2, Color.parseColor("#33FFFFFF"));
         panelOverlay.setBackground(fondo);
 
         TextView titulo = new TextView(this);
         titulo.setText("LÍMITE DE VOLUMEN");
         titulo.setTextColor(Color.WHITE);
-        titulo.setTextSize(20);
+        titulo.setTextSize(19);
         titulo.setGravity(Gravity.CENTER);
         panelOverlay.addView(titulo);
 
         textoValorOverlay = new TextView(this);
         textoValorOverlay.setTextColor(Color.parseColor("#00E676"));
         textoValorOverlay.setTextSize(42);
-        textoValorOverlay.setPadding(0, 24, 0, 24);
+        textoValorOverlay.setPadding(0, 20, 0, 20);
         textoValorOverlay.setGravity(Gravity.CENTER);
         panelOverlay.addView(textoValorOverlay);
 
         TextView subtitulo = new TextView(this);
-        subtitulo.setText("◄ / ► Modificar   •   OK Guardar");
+        subtitulo.setText("OK Guardar   •   Atrás Cerrar");
         subtitulo.setTextColor(Color.LTGRAY);
         subtitulo.setTextSize(14);
         subtitulo.setGravity(Gravity.CENTER);
@@ -162,7 +158,7 @@ public class VolumeLockService extends AccessibilityService {
         try {
             windowManager.addView(panelOverlay, params);
             overlayVisible = true;
-            reiniciarTemporizadorAutoCierre();
+            reiniciarTemporizador();
         } catch (Exception ignored) {}
     }
 
@@ -182,9 +178,9 @@ public class VolumeLockService extends AccessibilityService {
         forzarLimite();
     }
 
-    private void reiniciarTemporizadorAutoCierre() {
+    private void reiniciarTemporizador() {
         handler.removeCallbacks(autoCierreRunnable);
-        handler.postDelayed(autoCierreRunnable, 8000); // 8 segundos
+        handler.postDelayed(autoCierreRunnable, 8000);
     }
 
     private int obtenerLimite() {
@@ -209,34 +205,40 @@ public class VolumeLockService extends AccessibilityService {
 
     @Override
     public boolean onKeyEvent(KeyEvent event) {
-        if (event.getAction() == KeyEvent.ACTION_DOWN) {
-            int key = event.getKeyCode();
+        int key = event.getKeyCode();
 
-            // MIENTRAS EL RECINTITO FLOTANTE ESTÁ EN PANTALLA:
-            if (overlayVisible) {
-                reiniciarTemporizadorAutoCierre();
+        // 1. SI LA BARRITA ESTÁ EN PANTALLA:
+        if (overlayVisible) {
+            // Freno total al botón Atrás (destruye pulsación y soltada para no salir del video)
+            if (key == KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    cerrarOverlay();
+                }
+                return true; 
+            }
 
-                if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                reiniciarTemporizador();
+
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_DOWN) {
                     if (limiteTemporal > 5) limiteTemporal -= 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                    return true; // No deja que la tecla llegue a Netflix
-                } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    return true;
+                } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT || key == KeyEvent.KEYCODE_DPAD_UP) {
                     if (limiteTemporal < 100) limiteTemporal += 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
                     return true;
                 } else if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     guardarNuevoLimite();
                     return true;
-                } else if (key == KeyEvent.KEYCODE_BACK) {
-                    cerrarOverlay();
-                    return true;
                 }
             }
+            return true; // Bloquea cualquier otra tecla para que Netflix no se mueva
+        }
 
-            // DETECTOR DE LA CLAVE SECRETA:
-            if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN ||
-                key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-
+        // 2. DETECTOR DEL CÓDIGO: Arriba, Abajo, Arriba, Abajo, Arriba, Arriba
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
                 long ahora = System.currentTimeMillis();
                 if (ahora - tiempoUltimaTecla > 3500) {
                     indiceGlobal = 0;
@@ -258,7 +260,7 @@ public class VolumeLockService extends AccessibilityService {
             }
         }
 
-        // BLOQUEO INQUEBRANTABLE DE VOLUMEN
+        // 3. BLOQUEO DE VOLUMEN AL 25% (O AL LÍMITE FIJADO)
         if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) {
             AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
             if (audioManager != null) {
@@ -273,6 +275,7 @@ public class VolumeLockService extends AccessibilityService {
                 }
             }
         }
+
         return super.onKeyEvent(event);
     }
 
