@@ -2,89 +2,148 @@ package com.custom.tvvolumelock;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.os.Bundle;
-import android.provider.Settings;
+import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import java.util.Random;
 
 public class MainActivity extends Activity {
 
-    private int clickCount = 0;
-    private long lastClickTime = 0;
-    private NightSkyView skyView;
+    // Código con flechas: 3 veces seguidas Flecha DERECHA (► ► ►)
+    private int conteoDerecha = 0;
+    private long tiempoUltimaFlecha = 0;
+
+    private LinearLayout panelAjuste;
+    private TextView textoPorcentaje;
+    private int limiteTemporal = 25;
+    private boolean panelAbierto = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Pantalla completa total (sin barra superior de Android)
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN
         );
 
-        skyView = new NightSkyView(this);
+        NightSkyView skyView = new NightSkyView(this);
         setContentView(skyView);
+
+        crearPanelAjuste();
     }
 
-    // Captura cualquier toque físico en el cristal (móvil)
-    @Override
-    public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-            registrarToqueSecreto();
-        }
-        return super.dispatchTouchEvent(ev);
+    private void crearPanelAjuste() {
+        panelAjuste = new LinearLayout(this);
+        panelAjuste.setOrientation(LinearLayout.VERTICAL);
+        panelAjuste.setBackgroundColor(Color.parseColor("#F0080C1E"));
+        panelAjuste.setPadding(70, 50, 70, 50);
+        panelAjuste.setGravity(Gravity.CENTER);
+        panelAjuste.setVisibility(View.GONE);
+
+        TextView titulo = new TextView(this);
+        titulo.setText("LÍMITE DE VOLUMEN MÁXIMO");
+        titulo.setTextColor(Color.WHITE);
+        titulo.setTextSize(22);
+        titulo.setGravity(Gravity.CENTER);
+        panelAjuste.addView(titulo);
+
+        textoPorcentaje = new TextView(this);
+        textoPorcentaje.setTextColor(Color.parseColor("#00E676"));
+        textoPorcentaje.setTextSize(44);
+        textoPorcentaje.setPadding(0, 30, 0, 30);
+        textoPorcentaje.setGravity(Gravity.CENTER);
+        panelAjuste.addView(textoPorcentaje);
+
+        TextView ayuda = new TextView(this);
+        ayuda.setText("Usa las flechas ◄ / ► para modificar\nPresiona OK para guardar");
+        ayuda.setTextColor(Color.LTGRAY);
+        ayuda.setTextSize(16);
+        ayuda.setGravity(Gravity.CENTER);
+        panelAjuste.addView(ayuda);
+
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams();
+        params.gravity = Gravity.CENTER;
+        addContentView(panelAjuste, params);
     }
 
-    // Captura el botón OK / Enter del control remoto (TV)
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
-            registrarToqueSecreto();
-            return true;
+        // Si el panel ya está abierto:
+        if (panelAbierto) {
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (limiteTemporal > 5) limiteTemporal -= 5;
+                actualizarTextoPanel();
+                return true;
+            } else if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (limiteTemporal < 100) limiteTemporal += 5;
+                actualizarTextoPanel();
+                return true;
+            } else if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+                guardarYCerrar();
+                return true;
+            } else if (keyCode == KeyEvent.KEYCODE_BACK) {
+                panelAjuste.setVisibility(View.GONE);
+                panelAbierto = false;
+                return true;
+            }
         }
+
+        // Si el panel está cerrado, escucha 3 veces seguidas Flecha DERECHA:
+        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            long ahora = System.currentTimeMillis();
+            if (ahora - tiempoUltimaFlecha < 3000) {
+                conteoDerecha++;
+            } else {
+                conteoDerecha = 1;
+            }
+            tiempoUltimaFlecha = ahora;
+
+            if (conteoDerecha >= 3) {
+                conteoDerecha = 0;
+                abrirPanel();
+                return true;
+            }
+        } else {
+            conteoDerecha = 0; // Si tocan otra flecha se reinicia
+        }
+
         return super.onKeyDown(keyCode, event);
     }
 
-    // Contador silencioso: no muestra avisos ni pistas
-    private void registrarToqueSecreto() {
-        long now = System.currentTimeMillis();
-        if (now - lastClickTime < 2500) {
-            clickCount++;
-        } else {
-            clickCount = 1;
-        }
-        lastClickTime = now;
-
-        // Solo salta si llegas a 5 toques seguidos
-        if (clickCount >= 5) {
-            clickCount = 0;
-            try {
-                Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(intent);
-            } catch (Exception e) {
-                try {
-                    startActivity(new Intent(Settings.ACTION_SETTINGS));
-                } catch (Exception ignored) {}
-            }
-        }
+    private void abrirPanel() {
+        SharedPreferences prefs = getSharedPreferences("volume_prefs", Context.MODE_PRIVATE);
+        limiteTemporal = prefs.getInt("max_limit", 25);
+        actualizarTextoPanel();
+        panelAjuste.setVisibility(View.VISIBLE);
+        panelAbierto = true;
     }
 
-    // Vista decorativa del cielo nocturno con titileo ultra liviano
+    private void actualizarTextoPanel() {
+        textoPorcentaje.setText("◄   " + limiteTemporal + "%   ►");
+    }
+
+    private void guardarYCerrar() {
+        SharedPreferences prefs = getSharedPreferences("volume_prefs", Context.MODE_PRIVATE);
+        prefs.edit().putInt("max_limit", limiteTemporal).apply();
+        panelAjuste.setVisibility(View.GONE);
+        panelAbierto = false;
+    }
+
     private static class NightSkyView extends View {
         private final Paint starPaint = new Paint();
         private final Paint textPaint = new Paint();
-        private final float[][] stars = new float[70][4]; // X, Y, Radio base, Fase
+        private final float[][] stars = new float[70][4];
 
         public NightSkyView(Context context) {
             super(context);
@@ -108,14 +167,12 @@ public class MainActivity extends Activity {
         @Override
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            // Fondo azul noche profundo
             canvas.drawColor(Color.parseColor("#050813"));
 
             int w = getWidth();
             int h = getHeight();
             long time = System.currentTimeMillis();
 
-            // Dibujar las estrellas con brillo suave
             for (float[] star : stars) {
                 float alpha = (float) ((Math.sin(time * 0.002 + star[3]) + 1.0) / 2.0);
                 int alphaInt = 70 + (int) (alpha * 185);
@@ -123,10 +180,7 @@ public class MainActivity extends Activity {
                 canvas.drawCircle(star[0] * w, star[1] * h, star[2], starPaint);
             }
 
-            // Texto de descanso discreto en la parte inferior
             canvas.drawText("Rest", w / 2f, h * 0.90f, textPaint);
-
-            // Redibujo suave cada 60ms para no calentar ni gastar energía
             postInvalidateDelayed(60);
         }
     }
