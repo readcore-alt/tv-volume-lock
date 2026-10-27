@@ -27,8 +27,8 @@ public class VolumeLockService extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean servicioActivo = true;
 
-    // Código: Arriba, Abajo, Arriba, Abajo, Arriba, Arriba
-    private final int[] CODIGO_GLOBAL = {
+    // CLAVE 1: Flechas (Arriba, Abajo, Arriba, Abajo, Arriba, Arriba)
+    private final int[] CODIGO_FLECHAS = {
         KeyEvent.KEYCODE_DPAD_UP,
         KeyEvent.KEYCODE_DPAD_DOWN,
         KeyEvent.KEYCODE_DPAD_UP,
@@ -36,7 +36,12 @@ public class VolumeLockService extends AccessibilityService {
         KeyEvent.KEYCODE_DPAD_UP,
         KeyEvent.KEYCODE_DPAD_UP
     };
-    private int indiceGlobal = 0;
+    private int indiceFlechas = 0;
+
+    // CLAVE 2: Canales (+ - + - - +)
+    private final int[] CODIGO_CANALES = { 1, 2, 1, 2, 2, 1 };
+    private int indiceCanales = 0;
+
     private long tiempoUltimaTecla = 0;
 
     private WindowManager windowManager;
@@ -132,7 +137,7 @@ public class VolumeLockService extends AccessibilityService {
         panelOverlay.addView(textoValorOverlay);
 
         TextView subtitulo = new TextView(this);
-        subtitulo.setText("OK Guardar   •   Atrás Cerrar");
+        subtitulo.setText("OK Guardar");
         subtitulo.setTextColor(Color.LTGRAY);
         subtitulo.setTextSize(14);
         subtitulo.setGravity(Gravity.CENTER);
@@ -145,6 +150,7 @@ public class VolumeLockService extends AccessibilityService {
         limiteTemporal = obtenerLimite();
         textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
 
+        // RESTAURADO: FLAG_NOT_FOCUSABLE (la tele de fondo conserva el foco completo)
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -209,52 +215,81 @@ public class VolumeLockService extends AccessibilityService {
 
         // 1. SI LA BARRITA ESTÁ EN PANTALLA:
         if (overlayVisible) {
-            if (key == KeyEvent.KEYCODE_BACK) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    cerrarOverlay();
-                }
-                return true; 
-            }
-
-            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                reiniciarTemporizador();
-
-                if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+            if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    reiniciarTemporizador();
                     if (limiteTemporal > 5) limiteTemporal -= 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                    return true;
-                } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                }
+                return true;
+            }
+
+            if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                    reiniciarTemporizador();
                     if (limiteTemporal < 100) limiteTemporal += 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                    return true;
-                } else if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
-                    guardarNuevoLimite();
-                    return true;
                 }
+                return true;
             }
-            // Arriba y Abajo pasan libremente
+
+            if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    guardarNuevoLimite();
+                }
+                return true;
+            }
+
+            // Arriba, Abajo, Atrás y demás teclas siguen su curso normal en la tele
         }
 
-        // 2. DETECTOR DEL CÓDIGO (IGNORA REPETICIONES DEL MANDO)
+        // 2. DETECTOR DE LAS DOS CLAVES (Solo primer contacto de la tecla)
         if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-            if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
-                long ahora = System.currentTimeMillis();
-                if (ahora - tiempoUltimaTecla > 3500) {
-                    indiceGlobal = 0;
-                }
-                tiempoUltimaTecla = ahora;
+            long ahora = System.currentTimeMillis();
+            if (ahora - tiempoUltimaTecla > 3500) {
+                indiceFlechas = 0;
+                indiceCanales = 0;
+            }
+            tiempoUltimaTecla = ahora;
 
-                if (key == CODIGO_GLOBAL[indiceGlobal]) {
-                    indiceGlobal++;
-                    if (indiceGlobal == CODIGO_GLOBAL.length) {
-                        indiceGlobal = 0;
+            // Clave A: Flechas (Arriba / Abajo)
+            if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (key == CODIGO_FLECHAS[indiceFlechas]) {
+                    indiceFlechas++;
+                    if (indiceFlechas == CODIGO_FLECHAS.length) {
+                        indiceFlechas = 0;
+                        indiceCanales = 0;
                         mostrarOverlay();
                         return true;
                     }
                 } else if (key == KeyEvent.KEYCODE_DPAD_UP) {
-                    indiceGlobal = 1;
+                    indiceFlechas = 1;
                 } else {
-                    indiceGlobal = 0;
+                    indiceFlechas = 0;
+                }
+            }
+
+            // Clave B: Canales (+ - + - - +)
+            int tipoCanal = 0;
+            if (key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP) {
+                tipoCanal = 1;
+            } else if (key == KeyEvent.KEYCODE_CHANNEL_DOWN || key == KeyEvent.KEYCODE_PAGE_DOWN) {
+                tipoCanal = 2;
+            }
+
+            if (tipoCanal != 0) {
+                if (tipoCanal == CODIGO_CANALES[indiceCanales]) {
+                    indiceCanales++;
+                    if (indiceCanales == CODIGO_CANALES.length) {
+                        indiceCanales = 0;
+                        indiceFlechas = 0;
+                        mostrarOverlay();
+                        return true;
+                    }
+                } else if (tipoCanal == 1) {
+                    indiceCanales = 1;
+                } else {
+                    indiceCanales = 0;
                 }
             }
         }
