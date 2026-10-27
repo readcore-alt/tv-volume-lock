@@ -27,7 +27,7 @@ public class VolumeLockService extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean servicioActivo = true;
 
-    // Código ergonómico: Arriba, Abajo, Arriba, Abajo, Arriba, Arriba
+    // Código: Arriba, Abajo, Arriba, Abajo, Arriba, Arriba
     private final int[] CODIGO_GLOBAL = {
         KeyEvent.KEYCODE_DPAD_UP,
         KeyEvent.KEYCODE_DPAD_DOWN,
@@ -209,7 +209,7 @@ public class VolumeLockService extends AccessibilityService {
 
         // 1. SI LA BARRITA ESTÁ EN PANTALLA:
         if (overlayVisible) {
-            // Freno total al botón Atrás (destruye pulsación y soltada para no salir del video)
+            // Atrás solo cierra la barrita
             if (key == KeyEvent.KEYCODE_BACK) {
                 if (event.getAction() == KeyEvent.ACTION_DOWN) {
                     cerrarOverlay();
@@ -217,26 +217,39 @@ public class VolumeLockService extends AccessibilityService {
                 return true; 
             }
 
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                reiniciarTemporizador();
-
-                if (key == KeyEvent.KEYCODE_DPAD_LEFT || key == KeyEvent.KEYCODE_DPAD_DOWN) {
+            // Izquierda mueve la barra
+            if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    reiniciarTemporizador();
                     if (limiteTemporal > 5) limiteTemporal -= 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                    return true;
-                } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT || key == KeyEvent.KEYCODE_DPAD_UP) {
+                }
+                return true;
+            }
+
+            // Derecha mueve la barra
+            if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    reiniciarTemporizador();
                     if (limiteTemporal < 100) limiteTemporal += 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                    return true;
-                } else if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
-                    guardarNuevoLimite();
-                    return true;
                 }
+                return true;
             }
-            return true; // Bloquea cualquier otra tecla para que Netflix no se mueva
+
+            // OK guarda
+            if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    guardarNuevoLimite();
+                }
+                return true;
+            }
+
+            // IMPORTANTE: Si es Arriba, Abajo o cualquier otra tecla,
+            // NO se bloquea y sigue su curso normal a la tele o la app de fondo.
         }
 
-        // 2. DETECTOR DEL CÓDIGO: Arriba, Abajo, Arriba, Abajo, Arriba, Arriba
+        // 2. DETECTOR DEL CÓDIGO
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
                 long ahora = System.currentTimeMillis();
@@ -260,7 +273,7 @@ public class VolumeLockService extends AccessibilityService {
             }
         }
 
-        // 3. BLOQUEO DE VOLUMEN AL 25% (O AL LÍMITE FIJADO)
+        // 3. BLOQUEO DE VOLUMEN
         if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) {
             AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
             if (audioManager != null) {
