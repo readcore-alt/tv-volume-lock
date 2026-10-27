@@ -209,7 +209,6 @@ public class VolumeLockService extends AccessibilityService {
 
         // 1. SI LA BARRITA ESTÁ EN PANTALLA:
         if (overlayVisible) {
-            // Atrás solo cierra la barrita
             if (key == KeyEvent.KEYCODE_BACK) {
                 if (event.getAction() == KeyEvent.ACTION_DOWN) {
                     cerrarOverlay();
@@ -217,40 +216,27 @@ public class VolumeLockService extends AccessibilityService {
                 return true; 
             }
 
-            // Izquierda mueve la barra
-            if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    reiniciarTemporizador();
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                reiniciarTemporizador();
+
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
                     if (limiteTemporal > 5) limiteTemporal -= 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                }
-                return true;
-            }
-
-            // Derecha mueve la barra
-            if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    reiniciarTemporizador();
+                    return true;
+                } else if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
                     if (limiteTemporal < 100) limiteTemporal += 5;
                     textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                }
-                return true;
-            }
-
-            // OK guarda
-            if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    return true;
+                } else if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                     guardarNuevoLimite();
+                    return true;
                 }
-                return true;
             }
-
-            // IMPORTANTE: Si es Arriba, Abajo o cualquier otra tecla,
-            // NO se bloquea y sigue su curso normal a la tele o la app de fondo.
+            // Arriba y Abajo pasan libremente
         }
 
-        // 2. DETECTOR DEL CÓDIGO
-        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+        // 2. DETECTOR DEL CÓDIGO (IGNORA REPETICIONES DEL MANDO)
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
             if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
                 long ahora = System.currentTimeMillis();
                 if (ahora - tiempoUltimaTecla > 3500) {
