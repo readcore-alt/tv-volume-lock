@@ -2,6 +2,7 @@ package com.custom.tvvolumelock;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -18,8 +19,16 @@ import java.util.Random;
 
 public class MainActivity extends Activity {
 
-    // Código con flechas: 3 veces seguidas Flecha DERECHA (► ► ►)
-    private int conteoDerecha = 0;
+    // Código: Arriba, Abajo, Arriba, Abajo, Izquierda, Derecha
+    private final int[] CODIGO_SECRETO = {
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN,
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN,
+        KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_DPAD_RIGHT
+    };
+    private int indiceCodigo = 0;
     private long tiempoUltimaFlecha = 0;
 
     private LinearLayout panelAjuste;
@@ -41,6 +50,19 @@ public class MainActivity extends Activity {
         setContentView(skyView);
 
         crearPanelAjuste();
+        procesarIntento(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        procesarIntento(intent);
+    }
+
+    private void procesarIntento(Intent intent) {
+        if (intent != null && intent.getBooleanExtra("ABRIR_DIRECTO", false)) {
+            abrirPanel();
+        }
     }
 
     private void crearPanelAjuste() {
@@ -79,7 +101,6 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        // Si el panel ya está abierto:
         if (panelAbierto) {
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
                 if (limiteTemporal > 5) limiteTemporal -= 5;
@@ -99,23 +120,28 @@ public class MainActivity extends Activity {
             }
         }
 
-        // Si el panel está cerrado, escucha 3 veces seguidas Flecha DERECHA:
-        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+        // Si estás dentro de la app y metes el código:
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+            keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+
             long ahora = System.currentTimeMillis();
-            if (ahora - tiempoUltimaFlecha < 3000) {
-                conteoDerecha++;
-            } else {
-                conteoDerecha = 1;
+            if (ahora - tiempoUltimaFlecha > 3500) {
+                indiceCodigo = 0;
             }
             tiempoUltimaFlecha = ahora;
 
-            if (conteoDerecha >= 3) {
-                conteoDerecha = 0;
-                abrirPanel();
-                return true;
+            if (keyCode == CODIGO_SECRETO[indiceCodigo]) {
+                indiceCodigo++;
+                if (indiceCodigo == CODIGO_SECRETO.length) {
+                    indiceCodigo = 0;
+                    abrirPanel();
+                    return true;
+                }
+            } else if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                indiceCodigo = 1;
+            } else {
+                indiceCodigo = 0;
             }
-        } else {
-            conteoDerecha = 0; // Si tocan otra flecha se reinicia
         }
 
         return super.onKeyDown(keyCode, event);
