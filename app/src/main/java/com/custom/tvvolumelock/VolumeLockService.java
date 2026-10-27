@@ -25,7 +25,6 @@ import android.view.accessibility.AccessibilityEvent;
 public class VolumeLockService extends AccessibilityService {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private boolean servicioActivo = true;
 
     // CLAVE 1: Flechas (Arriba, Abajo, Arriba, Abajo, Arriba, Arriba)
     private final int[] CODIGO_FLECHAS = {
@@ -38,8 +37,7 @@ public class VolumeLockService extends AccessibilityService {
     };
     private int indiceFlechas = 0;
 
-    // CLAVE 2: Canales (+ - + - + +) -> MISMO PATRÓN
-    // 1 = Canal +, 2 = Canal -
+    // CLAVE 2: Canales (+ - + - + +)
     private final int[] CODIGO_CANALES = { 1, 2, 1, 2, 1, 1 };
     private int indiceCanales = 0;
 
@@ -58,6 +56,7 @@ public class VolumeLockService extends AccessibilityService {
         }
     };
 
+    // ESCUDO REACTIVO 1: Detecta el cambio en la base de datos de audio de inmediato
     private final ContentObserver volumeObserver = new ContentObserver(handler) {
         @Override
         public void onChange(boolean selfChange) {
@@ -66,20 +65,11 @@ public class VolumeLockService extends AccessibilityService {
         }
     };
 
+    // ESCUDO REACTIVO 2: Detecta el evento de volumen del sistema
     private final BroadcastReceiver volumeReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
             forzarLimite();
-        }
-    };
-
-    private final Runnable centinelaLoop = new Runnable() {
-        @Override
-        public void run() {
-            if (servicioActivo) {
-                forzarLimite();
-                handler.postDelayed(this, 80);
-            }
         }
     };
 
@@ -107,8 +97,7 @@ public class VolumeLockService extends AccessibilityService {
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         construirOverlayView();
 
-        servicioActivo = true;
-        handler.post(centinelaLoop);
+        // OPERACIÓN MANTEQUILLA: Bucle de 80ms apagado para eliminar la latencia al 100%
     }
 
     private void construirOverlayView() {
@@ -239,11 +228,9 @@ public class VolumeLockService extends AccessibilityService {
                 }
                 return true;
             }
-
-            // Arriba, Abajo, Atrás y demás teclas siguen su curso normal en la tele
         }
 
-        // 2. DETECTOR DE LAS DOS CLAVES (Solo primer contacto de la tecla)
+        // 2. DETECTOR DE LAS DOS CLAVES (+ - + - + +)
         if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
             long ahora = System.currentTimeMillis();
             if (ahora - tiempoUltimaTecla > 3500) {
@@ -252,7 +239,7 @@ public class VolumeLockService extends AccessibilityService {
             }
             tiempoUltimaTecla = ahora;
 
-            // Clave A: Flechas (Arriba, Abajo, Arriba, Abajo, Arriba, Arriba)
+            // Clave A: Flechas
             if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (key == CODIGO_FLECHAS[indiceFlechas]) {
                     indiceFlechas++;
@@ -269,7 +256,7 @@ public class VolumeLockService extends AccessibilityService {
                 }
             }
 
-            // Clave B: Canales (+ - + - + +) -> MISMO PATRÓN
+            // Clave B: Canales
             int tipoCanal = 0;
             if (key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP) {
                 tipoCanal = 1;
@@ -294,7 +281,7 @@ public class VolumeLockService extends AccessibilityService {
             }
         }
 
-        // 3. BLOQUEO DE VOLUMEN
+        // 3. BLOQUEO PROACTIVO DE VOLUMEN (Sin latencia de sondeo)
         if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) {
             AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
             if (audioManager != null) {
@@ -316,8 +303,6 @@ public class VolumeLockService extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        servicioActivo = false;
-        handler.removeCallbacks(centinelaLoop);
         cerrarOverlay();
         try {
             getContentResolver().unregisterContentObserver(volumeObserver);
