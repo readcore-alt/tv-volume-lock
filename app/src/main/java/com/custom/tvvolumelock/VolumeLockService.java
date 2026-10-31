@@ -131,9 +131,10 @@ public class VolumeLockService extends AccessibilityService {
         handler.post(centinelaLoop);
     }
 
-    // DETECTOR UNIVERSAL DE BOTONES DE RETROCESO (Todas las variantes de TV)
+    // EL DETECTOR UNIVERSAL: Cubre Miray (259), TCL (4) y variantes
     private boolean esBotonAtras(int key) {
-        return key == KeyEvent.KEYCODE_BACK                    // 4 (Estándar)
+        return key == 259                                      // KEYCODE_HELP (Tu tele Miray)
+            || key == KeyEvent.KEYCODE_BACK                    // 4 (Estándar TCL)
             || key == KeyEvent.KEYCODE_ESCAPE                  // 111 (Común en mandos TV)
             || key == KeyEvent.KEYCODE_DEL                     // 67 (Backspace)
             || key == KeyEvent.KEYCODE_NAVIGATE_PREVIOUS       // 260
@@ -158,7 +159,6 @@ public class VolumeLockService extends AccessibilityService {
         panelOverlay.setFocusable(true);
         panelOverlay.setFocusableInTouchMode(true);
 
-        // Doble escucha: listener directo en la vista
         panelOverlay.setOnKeyListener(new View.OnKeyListener() {
             @Override
             public boolean onKey(View v, int keyCode, KeyEvent event) {
@@ -285,10 +285,10 @@ public class VolumeLockService extends AccessibilityService {
     private void actualizarVisualOverlay() {
         if (modoVinculado) {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►  ●");
-            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF"));
+            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF")); // Celeste suave
         } else {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-            textoValorOverlay.setTextColor(Color.parseColor("#00E676"));
+            textoValorOverlay.setTextColor(Color.parseColor("#00E676")); // Verde normal
         }
         textoSubtitulo.setText("OK Guardar   •   Atrás Cancelar");
         textoSubtitulo.setTextColor(Color.LTGRAY);
@@ -367,19 +367,18 @@ public class VolumeLockService extends AccessibilityService {
         return key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP;
     }
 
-    // EL PROCESADOR UNIVERSAL DE TECLAS
     private boolean procesarTeclasOverlay(KeyEvent event) {
         if (!overlayVisible) return false;
 
         int key = event.getKeyCode();
 
-        // 1. SI ES CUALQUIER VARIANTE DE ATRÁS: CIERRA INMEDIATAMENTE (Tanto en DOWN como en UP)
+        // 1. SI ES CUALQUIER VARIANTE DE ATRÁS (INCLUIDO EL 259 DE TU TELE): CIERRA DE INMEDIATO
         if (esBotonAtras(key)) {
             cancelarYCerrar();
             return true;
         }
 
-        // 2. MANEJO DE LA TECLA AL SOLTAR (ACTION_UP)
+        // 2. MANEJO AL SOLTAR (ACTION_UP)
         if (event.getAction() == KeyEvent.ACTION_UP) {
             if (isChannelUp(key)) {
                 chPlusSoltadoTrasAbrir = true;
@@ -391,7 +390,7 @@ public class VolumeLockService extends AccessibilityService {
             return true;
         }
 
-        // 3. MANEJO DE LA TECLA AL PRESIONAR (ACTION_DOWN)
+        // 3. MANEJO AL PRESIONAR (ACTION_DOWN)
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             // Flechas horizontales (±5%)
             if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
@@ -436,9 +435,7 @@ public class VolumeLockService extends AccessibilityService {
                 return true;
             }
 
-            // DIAGNÓSTICO EN VIVO: Si presionas una tecla no reconocida, muestra su código abajo
             reiniciarTemporizador();
-            textoSubtitulo.setText("Tecla: " + key + " (" + KeyEvent.keyCodeToString(key) + ")");
         }
 
         return true;
