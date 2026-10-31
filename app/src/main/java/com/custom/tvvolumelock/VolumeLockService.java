@@ -17,6 +17,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -130,8 +131,17 @@ public class VolumeLockService extends AccessibilityService {
         handler.post(centinelaLoop);
     }
 
+    // DETECTOR UNIVERSAL DE BOTONES DE RETROCESO (Todas las variantes de TV)
+    private boolean esBotonAtras(int key) {
+        return key == KeyEvent.KEYCODE_BACK                    // 4 (Estándar)
+            || key == KeyEvent.KEYCODE_ESCAPE                  // 111 (Común en mandos TV)
+            || key == KeyEvent.KEYCODE_DEL                     // 67 (Backspace)
+            || key == KeyEvent.KEYCODE_NAVIGATE_PREVIOUS       // 260
+            || key == KeyEvent.KEYCODE_BUTTON_B                // 97
+            || key == KeyEvent.KEYCODE_MEDIA_PREVIOUS;         // 88
+    }
+
     private void construirOverlayView() {
-        // SOBREESCRIBIMOS dispatchKeyEvent DIRECTO EN LA VISTA PARA QUE ATRAPAR ATRÁS NUNCA FALLE
         panelOverlay = new LinearLayout(this) {
             @Override
             public boolean dispatchKeyEvent(KeyEvent event) {
@@ -147,6 +157,14 @@ public class VolumeLockService extends AccessibilityService {
         panelOverlay.setPadding(80, 45, 80, 45);
         panelOverlay.setFocusable(true);
         panelOverlay.setFocusableInTouchMode(true);
+
+        // Doble escucha: listener directo en la vista
+        panelOverlay.setOnKeyListener(new View.OnKeyListener() {
+            @Override
+            public boolean onKey(View v, int keyCode, KeyEvent event) {
+                return procesarTeclasOverlay(event);
+            }
+        });
 
         GradientDrawable fondo = new GradientDrawable();
         fondo.setColor(Color.parseColor("#E6080C1E"));
@@ -191,7 +209,6 @@ public class VolumeLockService extends AccessibilityService {
 
         actualizarVisualOverlay();
 
-        // FLAG_NOT_TOUCH_MODAL: Atrapa las teclas en la barrita pero deja que el video corra de fondo
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -350,17 +367,20 @@ public class VolumeLockService extends AccessibilityService {
         return key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP;
     }
 
-    // EL MOTOR CENTRAL DE TECLAS CUANDO LA BARRITA ESTÁ EN PANTALLA
+    // EL PROCESADOR UNIVERSAL DE TECLAS
     private boolean procesarTeclasOverlay(KeyEvent event) {
         if (!overlayVisible) return false;
 
         int key = event.getKeyCode();
 
-        // 1. SOLTADA (ACTION_UP)
+        // 1. SI ES CUALQUIER VARIANTE DE ATRÁS: CIERRA INMEDIATAMENTE (Tanto en DOWN como en UP)
+        if (esBotonAtras(key)) {
+            cancelarYCerrar();
+            return true;
+        }
+
+        // 2. MANEJO DE LA TECLA AL SOLTAR (ACTION_UP)
         if (event.getAction() == KeyEvent.ACTION_UP) {
-            if (key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_ESCAPE) {
-                return true; // Consume la soltada para que Netflix no la vea
-            }
             if (isChannelUp(key)) {
                 chPlusSoltadoTrasAbrir = true;
                 if (esperandoHoldVincular) {
@@ -371,14 +391,9 @@ public class VolumeLockService extends AccessibilityService {
             return true;
         }
 
-        // 2. PULSACIÓN (ACTION_DOWN)
+        // 3. MANEJO DE LA TECLA AL PRESIONAR (ACTION_DOWN)
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
-            // AHORA SÍ: ATRÁS O ESCAPE CANCELAN Y CIERRAN
-            if (key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_ESCAPE) {
-                cancelarYCerrar();
-                return true;
-            }
-
+            // Flechas horizontales (±5%)
             if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
                 if (event.getRepeatCount() == 0) modificarLimite(-5);
                 return true;
@@ -387,6 +402,8 @@ public class VolumeLockService extends AccessibilityService {
                 if (event.getRepeatCount() == 0) modificarLimite(5);
                 return true;
             }
+
+            // Flechas verticales (±1% punto a punto)
             if (key == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (event.getRepeatCount() == 0) modificarLimite(-1);
                 return true;
@@ -396,11 +413,13 @@ public class VolumeLockService extends AccessibilityService {
                 return true;
             }
 
+            // Guardar
             if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
                 guardarNuevoLimite();
                 return true;
             }
 
+            // Vincular: mantener CH+ por 2s
             if (isChannelUp(key)) {
                 if (chPlusSoltadoTrasAbrir && !modoVinculado && event.getRepeatCount() == 0) {
                     esperandoHoldVincular = true;
@@ -409,12 +428,17 @@ public class VolumeLockService extends AccessibilityService {
                 return true;
             }
 
+            // Desvincular: un toque a CH-
             if (isChannelDown(key)) {
                 if (event.getRepeatCount() == 0 && modoVinculado) {
                     desvincularAudio();
                 }
                 return true;
             }
+
+            // DIAGNÓSTICO EN VIVO: Si presionas una tecla no reconocida, muestra su código abajo
+            reiniciarTemporizador();
+            textoSubtitulo.setText("Tecla: " + key + " (" + KeyEvent.keyCodeToString(key) + ")");
         }
 
         return true;
