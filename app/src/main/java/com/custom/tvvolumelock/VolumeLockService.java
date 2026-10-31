@@ -14,6 +14,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.media.AudioManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -38,6 +39,9 @@ public class VolumeLockService extends AccessibilityService {
     private boolean esperandoHoldVincular = false;
     private boolean chPlusSoltadoTrasAbrir = false;
     private int volumenPrevioVinculacion = -1;
+
+    // ESCUDO RESIDUAL: Bloquea fugas a Netflix durante 600ms tras cerrar
+    private long tiempoUltimoCierreOverlay = 0;
 
     private WindowManager windowManager;
     private LinearLayout panelOverlay;
@@ -131,7 +135,6 @@ public class VolumeLockService extends AccessibilityService {
         handler.post(centinelaLoop);
     }
 
-    // EL DETECTOR UNIVERSAL: Cubre Miray (259), TCL (4) y variantes
     private boolean esBotonAtras(int key) {
         return key == 259                                      // KEYCODE_HELP (Tu tele Miray)
             || key == KeyEvent.KEYCODE_BACK                    // 4 (Estándar TCL)
@@ -285,10 +288,10 @@ public class VolumeLockService extends AccessibilityService {
     private void actualizarVisualOverlay() {
         if (modoVinculado) {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►  ●");
-            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF")); // Celeste suave
+            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF"));
         } else {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-            textoValorOverlay.setTextColor(Color.parseColor("#00E676")); // Verde normal
+            textoValorOverlay.setTextColor(Color.parseColor("#00E676"));
         }
         textoSubtitulo.setText("OK Guardar   •   Atrás Cancelar");
         textoSubtitulo.setTextColor(Color.LTGRAY);
@@ -308,6 +311,7 @@ public class VolumeLockService extends AccessibilityService {
     }
 
     private void guardarNuevoLimite() {
+        tiempoUltimoCierreOverlay = SystemClock.uptimeMillis();
         SharedPreferences prefs = getSharedPreferences("volume_prefs", Context.MODE_PRIVATE);
         prefs.edit().putInt("max_limit", limiteTemporal).apply();
 
@@ -327,6 +331,7 @@ public class VolumeLockService extends AccessibilityService {
     }
 
     private void cancelarYCerrar() {
+        tiempoUltimoCierreOverlay = SystemClock.uptimeMillis();
         if (modoVinculado) {
             desvincularAudio();
         }
@@ -372,13 +377,15 @@ public class VolumeLockService extends AccessibilityService {
 
         int key = event.getKeyCode();
 
-        // 1. SI ES CUALQUIER VARIANTE DE ATRÁS (INCLUIDO EL 259 DE TU TELE): CIERRA DE INMEDIATO
+        // 1. MANEJO DE ATRÁS
         if (esBotonAtras(key)) {
-            cancelarYCerrar();
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                cancelarYCerrar();
+            }
             return true;
         }
 
-        // 2. MANEJO AL SOLTAR (ACTION_UP)
+        // 2. SOLTAR TECLA (ACTION_UP)
         if (event.getAction() == KeyEvent.ACTION_UP) {
             if (isChannelUp(key)) {
                 chPlusSoltadoTrasAbrir = true;
@@ -390,7 +397,7 @@ public class VolumeLockService extends AccessibilityService {
             return true;
         }
 
-        // 3. MANEJO AL PRESIONAR (ACTION_DOWN)
+        // 3. PRESIONAR TECLA (ACTION_DOWN)
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             // Flechas horizontales (±5%)
             if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
@@ -445,7 +452,15 @@ public class VolumeLockService extends AccessibilityService {
     public boolean onKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
 
-        // 1. Si la barrita está abierta, pasa por el procesador
+        // ESCUDO RESIDUAL: Si la barrita se cerró hace menos de 600ms, destruye
+        // cualquier soltada o repetición residual para que Netflix jamás la reciba.
+        if (!overlayVisible && (SystemClock.uptimeMillis() - tiempoUltimoCierreOverlay < 600)) {
+            if (esBotonAtras(key) || key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+                return true; // <-- DESTRUIDO EN EL AIRE
+            }
+        }
+
+        // 1. Si la barrita está en pantalla:
         if (overlayVisible) {
             if (procesarTeclasOverlay(event)) {
                 return true;
