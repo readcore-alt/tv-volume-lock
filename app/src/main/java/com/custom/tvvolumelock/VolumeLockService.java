@@ -38,9 +38,6 @@ public class VolumeLockService extends AccessibilityService {
     private boolean chPlusSoltadoTrasAbrir = false;
     private int volumenPrevioVinculacion = -1;
 
-    // ESCUDO DEL BOTÓN ATRÁS (Evita que la soltada del botón pase a Netflix)
-    private boolean ignorarProximoBackUp = false;
-
     private WindowManager windowManager;
     private LinearLayout panelOverlay;
     private TextView textoValorOverlay;
@@ -134,7 +131,17 @@ public class VolumeLockService extends AccessibilityService {
     }
 
     private void construirOverlayView() {
-        panelOverlay = new LinearLayout(this);
+        // SOBREESCRIBIMOS dispatchKeyEvent DIRECTO EN LA VISTA PARA QUE ATRAPAR ATRÁS NUNCA FALLE
+        panelOverlay = new LinearLayout(this) {
+            @Override
+            public boolean dispatchKeyEvent(KeyEvent event) {
+                if (procesarTeclasOverlay(event)) {
+                    return true;
+                }
+                return super.dispatchKeyEvent(event);
+            }
+        };
+
         panelOverlay.setOrientation(LinearLayout.VERTICAL);
         panelOverlay.setGravity(Gravity.CENTER);
         panelOverlay.setPadding(80, 45, 80, 45);
@@ -176,7 +183,6 @@ public class VolumeLockService extends AccessibilityService {
         modoVinculado = false;
         chPlusSoltadoTrasAbrir = false;
         esperandoHoldVincular = false;
-        ignorarProximoBackUp = false;
 
         AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         if (am != null) {
@@ -185,12 +191,13 @@ public class VolumeLockService extends AccessibilityService {
 
         actualizarVisualOverlay();
 
-        // QUITADO FLAG_NOT_FOCUSABLE: Ahora la barrita sí tiene foco para capturar Atrás
+        // FLAG_NOT_TOUCH_MODAL: Atrapa las teclas en la barrita pero deja que el video corra de fondo
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.CENTER;
@@ -198,7 +205,12 @@ public class VolumeLockService extends AccessibilityService {
         try {
             windowManager.addView(panelOverlay, params);
             overlayVisible = true;
-            panelOverlay.requestFocus();
+            panelOverlay.post(new Runnable() {
+                @Override
+                public void run() {
+                    panelOverlay.requestFocus();
+                }
+            });
             reiniciarTemporizador();
         } catch (Exception ignored) {}
     }
@@ -256,10 +268,10 @@ public class VolumeLockService extends AccessibilityService {
     private void actualizarVisualOverlay() {
         if (modoVinculado) {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►  ●");
-            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF")); // Celeste
+            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF"));
         } else {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-            textoValorOverlay.setTextColor(Color.parseColor("#00E676")); // Verde normal
+            textoValorOverlay.setTextColor(Color.parseColor("#00E676"));
         }
         textoSubtitulo.setText("OK Guardar   •   Atrás Cancelar");
         textoSubtitulo.setTextColor(Color.LTGRAY);
@@ -338,81 +350,84 @@ public class VolumeLockService extends AccessibilityService {
         return key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP;
     }
 
-    @Override
-    public boolean onKeyEvent(KeyEvent event) {
+    // EL MOTOR CENTRAL DE TECLAS CUANDO LA BARRITA ESTÁ EN PANTALLA
+    private boolean procesarTeclasOverlay(KeyEvent event) {
+        if (!overlayVisible) return false;
+
         int key = event.getKeyCode();
 
-        // 1. SI LA BARRITA ESTÁ EN PANTALLA
-        if (overlayVisible) {
-            // Manejo de la tecla suelta (ACTION_UP)
-            if (event.getAction() == KeyEvent.ACTION_UP) {
-                // Escudo para atrapar la soltada de ATRÁS y que no llegue a Netflix
-                if (key == KeyEvent.KEYCODE_BACK && ignorarProximoBackUp) {
-                    ignorarProximoBackUp = false;
-                    return true;
+        // 1. SOLTADA (ACTION_UP)
+        if (event.getAction() == KeyEvent.ACTION_UP) {
+            if (key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_ESCAPE) {
+                return true; // Consume la soltada para que Netflix no la vea
+            }
+            if (isChannelUp(key)) {
+                chPlusSoltadoTrasAbrir = true;
+                if (esperandoHoldVincular) {
+                    handler.removeCallbacks(vincularRunnable);
+                    esperandoHoldVincular = false;
                 }
+            }
+            return true;
+        }
 
-                if (isChannelUp(key)) {
-                    chPlusSoltadoTrasAbrir = true;
-                    if (esperandoHoldVincular) {
-                        handler.removeCallbacks(vincularRunnable);
-                        esperandoHoldVincular = false;
-                    }
+        // 2. PULSACIÓN (ACTION_DOWN)
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            // AHORA SÍ: ATRÁS O ESCAPE CANCELAN Y CIERRAN
+            if (key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_ESCAPE) {
+                cancelarYCerrar();
+                return true;
+            }
+
+            if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                if (event.getRepeatCount() == 0) modificarLimite(-5);
+                return true;
+            }
+            if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                if (event.getRepeatCount() == 0) modificarLimite(5);
+                return true;
+            }
+            if (key == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (event.getRepeatCount() == 0) modificarLimite(-1);
+                return true;
+            }
+            if (key == KeyEvent.KEYCODE_DPAD_UP) {
+                if (event.getRepeatCount() == 0) modificarLimite(1);
+                return true;
+            }
+
+            if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+                guardarNuevoLimite();
+                return true;
+            }
+
+            if (isChannelUp(key)) {
+                if (chPlusSoltadoTrasAbrir && !modoVinculado && event.getRepeatCount() == 0) {
+                    esperandoHoldVincular = true;
+                    handler.postDelayed(vincularRunnable, 2000);
                 }
                 return true;
             }
 
-            // Manejo de la tecla pulsada (ACTION_DOWN)
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                // AHORA SÍ: Captura real de Retroceder / Atrás
-                if (key == KeyEvent.KEYCODE_BACK) {
-                    ignorarProximoBackUp = true; // Prepara el escudo para el ACTION_UP
-                    cancelarYCerrar();
-                    return true;
+            if (isChannelDown(key)) {
+                if (event.getRepeatCount() == 0 && modoVinculado) {
+                    desvincularAudio();
                 }
+                return true;
+            }
+        }
 
-                // Flechas horizontales (±5%)
-                if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
-                    if (event.getRepeatCount() == 0) modificarLimite(-5);
-                    return true;
-                }
-                if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                    if (event.getRepeatCount() == 0) modificarLimite(5);
-                    return true;
-                }
+        return true;
+    }
 
-                // Flechas verticales (±1% punto a punto)
-                if (key == KeyEvent.KEYCODE_DPAD_DOWN) {
-                    if (event.getRepeatCount() == 0) modificarLimite(-1);
-                    return true;
-                }
-                if (key == KeyEvent.KEYCODE_DPAD_UP) {
-                    if (event.getRepeatCount() == 0) modificarLimite(1);
-                    return true;
-                }
+    @Override
+    public boolean onKeyEvent(KeyEvent event) {
+        int key = event.getKeyCode();
 
-                // Guardar
-                if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
-                    guardarNuevoLimite();
-                    return true;
-                }
-
-                // Mantener presionado CH+ por 2s para vincular
-                if (isChannelUp(key)) {
-                    if (chPlusSoltadoTrasAbrir && !modoVinculado && event.getRepeatCount() == 0) {
-                        esperandoHoldVincular = true;
-                        handler.postDelayed(vincularRunnable, 2000);
-                    }
-                    return true;
-                }
-
-                // Un solo toque a CH- desvincula
-                if (isChannelDown(key)) {
-                    if (event.getRepeatCount() == 0 && modoVinculado) {
-                        desvincularAudio();
-                    }
-                    return true;
-                }
+        // 1. Si la barrita está abierta, pasa por el procesador
+        if (overlayVisible) {
+            if (procesarTeclasOverlay(event)) {
+                return true;
             }
             return true;
         }
