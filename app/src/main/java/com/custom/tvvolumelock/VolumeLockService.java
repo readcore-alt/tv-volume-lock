@@ -38,6 +38,9 @@ public class VolumeLockService extends AccessibilityService {
     private boolean chPlusSoltadoTrasAbrir = false;
     private int volumenPrevioVinculacion = -1;
 
+    // ESCUDO DEL BOTÓN ATRÁS (Evita que la soltada del botón pase a Netflix)
+    private boolean ignorarProximoBackUp = false;
+
     private WindowManager windowManager;
     private LinearLayout panelOverlay;
     private TextView textoValorOverlay;
@@ -135,6 +138,8 @@ public class VolumeLockService extends AccessibilityService {
         panelOverlay.setOrientation(LinearLayout.VERTICAL);
         panelOverlay.setGravity(Gravity.CENTER);
         panelOverlay.setPadding(80, 45, 80, 45);
+        panelOverlay.setFocusable(true);
+        panelOverlay.setFocusableInTouchMode(true);
 
         GradientDrawable fondo = new GradientDrawable();
         fondo.setColor(Color.parseColor("#E6080C1E"));
@@ -171,6 +176,7 @@ public class VolumeLockService extends AccessibilityService {
         modoVinculado = false;
         chPlusSoltadoTrasAbrir = false;
         esperandoHoldVincular = false;
+        ignorarProximoBackUp = false;
 
         AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         if (am != null) {
@@ -179,12 +185,12 @@ public class VolumeLockService extends AccessibilityService {
 
         actualizarVisualOverlay();
 
+        // QUITADO FLAG_NOT_FOCUSABLE: Ahora la barrita sí tiene foco para capturar Atrás
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         );
         params.gravity = Gravity.CENTER;
@@ -192,6 +198,7 @@ public class VolumeLockService extends AccessibilityService {
         try {
             windowManager.addView(panelOverlay, params);
             overlayVisible = true;
+            panelOverlay.requestFocus();
             reiniciarTemporizador();
         } catch (Exception ignored) {}
     }
@@ -246,16 +253,14 @@ public class VolumeLockService extends AccessibilityService {
         }
     }
 
-    // EL INDICADOR ULTRA SUTIL (Solo un punto discreto, cero textos delatores)
     private void actualizarVisualOverlay() {
         if (modoVinculado) {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►  ●");
-            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF")); // Celeste suave
+            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF")); // Celeste
         } else {
             textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
             textoValorOverlay.setTextColor(Color.parseColor("#00E676")); // Verde normal
         }
-        // El subtítulo NUNCA cambia:
         textoSubtitulo.setText("OK Guardar   •   Atrás Cancelar");
         textoSubtitulo.setTextColor(Color.LTGRAY);
     }
@@ -279,7 +284,6 @@ public class VolumeLockService extends AccessibilityService {
 
         if (modoVinculado) {
             modoVinculado = false;
-            // Regresa al volumen previo respetando el nuevo límite fijado
             AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
             if (am != null) {
                 int maximo = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
@@ -340,7 +344,14 @@ public class VolumeLockService extends AccessibilityService {
 
         // 1. SI LA BARRITA ESTÁ EN PANTALLA
         if (overlayVisible) {
+            // Manejo de la tecla suelta (ACTION_UP)
             if (event.getAction() == KeyEvent.ACTION_UP) {
+                // Escudo para atrapar la soltada de ATRÁS y que no llegue a Netflix
+                if (key == KeyEvent.KEYCODE_BACK && ignorarProximoBackUp) {
+                    ignorarProximoBackUp = false;
+                    return true;
+                }
+
                 if (isChannelUp(key)) {
                     chPlusSoltadoTrasAbrir = true;
                     if (esperandoHoldVincular) {
@@ -348,9 +359,14 @@ public class VolumeLockService extends AccessibilityService {
                         esperandoHoldVincular = false;
                     }
                 }
-            } else if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                // Cancelar y salir
+                return true;
+            }
+
+            // Manejo de la tecla pulsada (ACTION_DOWN)
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                // AHORA SÍ: Captura real de Retroceder / Atrás
                 if (key == KeyEvent.KEYCODE_BACK) {
+                    ignorarProximoBackUp = true; // Prepara el escudo para el ACTION_UP
                     cancelarYCerrar();
                     return true;
                 }
