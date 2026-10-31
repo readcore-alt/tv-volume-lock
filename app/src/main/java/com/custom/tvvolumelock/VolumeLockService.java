@@ -25,51 +25,80 @@ import android.view.accessibility.AccessibilityEvent;
 public class VolumeLockService extends AccessibilityService {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private boolean servicioActivo = true;
 
-    // CLAVE 1: Flechas (Arriba, Abajo, Arriba, Abajo, Arriba, Arriba)
-    private final int[] CODIGO_FLECHAS = {
-        KeyEvent.KEYCODE_DPAD_UP,
-        KeyEvent.KEYCODE_DPAD_DOWN,
-        KeyEvent.KEYCODE_DPAD_UP,
-        KeyEvent.KEYCODE_DPAD_DOWN,
-        KeyEvent.KEYCODE_DPAD_UP,
-        KeyEvent.KEYCODE_DPAD_UP
-    };
-    private int indiceFlechas = 0;
+    // MÁQUINA DE ESTADOS: Clave CH- -> CH- -> Hold CH+ (3s)
+    private int pasoClave = 0;
+    private long tiempoUltimoPaso = 0;
+    private boolean esperandoHoldAbrir = false;
 
-    // CLAVE 2: Canales (+ - + - + +)
-    private final int[] CODIGO_CANALES = { 1, 2, 1, 2, 1, 1 };
-    private int indiceCanales = 0;
-
-    private long tiempoUltimaTecla = 0;
+    // VINCULACIÓN EN VIVO
+    private boolean modoVinculado = false;
+    private boolean esperandoHoldVincular = false;
+    private boolean chPlusSoltadoTrasAbrir = false;
+    private int volumenPrevioVinculacion = -1;
 
     private WindowManager windowManager;
     private LinearLayout panelOverlay;
     private TextView textoValorOverlay;
+    private TextView textoSubtitulo;
     private boolean overlayVisible = false;
     private int limiteTemporal = 25;
+
+    private final Runnable abrirOverlayRunnable = new Runnable() {
+        @Override
+        public void run() {
+            pasoClave = 0;
+            esperandoHoldAbrir = false;
+            mostrarOverlay();
+        }
+    };
+
+    private final Runnable vincularRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (overlayVisible && !modoVinculado) {
+                activarVinculacion();
+            }
+        }
+    };
 
     private final Runnable autoCierreRunnable = new Runnable() {
         @Override
         public void run() {
-            cerrarOverlay();
+            cancelarYCerrar();
         }
     };
 
-    // ESCUDO REACTIVO 1: Detecta el cambio en la base de datos de audio de inmediato
     private final ContentObserver volumeObserver = new ContentObserver(handler) {
         @Override
         public void onChange(boolean selfChange) {
             super.onChange(selfChange);
-            forzarLimite();
+            if (!modoVinculado) {
+                forzarLimite();
+            }
         }
     };
 
-    // ESCUDO REACTIVO 2: Detecta el evento de volumen del sistema
     private final BroadcastReceiver volumeReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            forzarLimite();
+            if (!modoVinculado) {
+                forzarLimite();
+            }
+        }
+    };
+
+    // CENTINELA A 200 MS
+    private final Runnable centinelaLoop = new Runnable() {
+        @Override
+        public void run() {
+            if (servicioActivo) {
+                if (!modoVinculado) {
+                    forzarLimite();
+                }
+                handler.postDelayed(this, 200);
+            }
         }
     };
 
@@ -97,7 +126,8 @@ public class VolumeLockService extends AccessibilityService {
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         construirOverlayView();
 
-        // OPERACIÓN MANTEQUILLA: Bucle de 80ms apagado para eliminar la latencia al 100%
+        servicioActivo = true;
+        handler.post(centinelaLoop);
     }
 
     private void construirOverlayView() {
@@ -126,19 +156,28 @@ public class VolumeLockService extends AccessibilityService {
         textoValorOverlay.setGravity(Gravity.CENTER);
         panelOverlay.addView(textoValorOverlay);
 
-        TextView subtitulo = new TextView(this);
-        subtitulo.setText("OK Guardar");
-        subtitulo.setTextColor(Color.LTGRAY);
-        subtitulo.setTextSize(14);
-        subtitulo.setGravity(Gravity.CENTER);
-        panelOverlay.addView(subtitulo);
+        textoSubtitulo = new TextView(this);
+        textoSubtitulo.setText("OK Guardar   •   Atrás Cancelar");
+        textoSubtitulo.setTextColor(Color.LTGRAY);
+        textoSubtitulo.setTextSize(14);
+        textoSubtitulo.setGravity(Gravity.CENTER);
+        panelOverlay.addView(textoSubtitulo);
     }
 
     private void mostrarOverlay() {
         if (overlayVisible || windowManager == null || panelOverlay == null) return;
 
         limiteTemporal = obtenerLimite();
-        textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
+        modoVinculado = false;
+        chPlusSoltadoTrasAbrir = false;
+        esperandoHoldVincular = false;
+
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            volumenPrevioVinculacion = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+        }
+
+        actualizarVisualOverlay();
 
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -160,15 +199,104 @@ public class VolumeLockService extends AccessibilityService {
     private void cerrarOverlay() {
         if (!overlayVisible || windowManager == null || panelOverlay == null) return;
         handler.removeCallbacks(autoCierreRunnable);
+        handler.removeCallbacks(vincularRunnable);
         try {
             windowManager.removeView(panelOverlay);
         } catch (Exception ignored) {}
         overlayVisible = false;
+        modoVinculado = false;
+    }
+
+    private void activarVinculacion() {
+        modoVinculado = true;
+        esperandoHoldVincular = false;
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            volumenPrevioVinculacion = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+        }
+        aplicarAudioEnVivo(limiteTemporal);
+        actualizarVisualOverlay();
+        reiniciarTemporizador();
+    }
+
+    private void desvincularAudio() {
+        if (modoVinculado) {
+            modoVinculado = false;
+            restaurarVolumenPrevio();
+            actualizarVisualOverlay();
+            reiniciarTemporizador();
+        }
+    }
+
+    private void restaurarVolumenPrevio() {
+        if (volumenPrevioVinculacion >= 0) {
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, volumenPrevioVinculacion, 0);
+            }
+        }
+    }
+
+    private void aplicarAudioEnVivo(int porcentaje) {
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am != null) {
+            int maximo = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+            int nivel = (porcentaje * maximo) / 100;
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, nivel, 0);
+        }
+    }
+
+    // EL INDICADOR ULTRA SUTIL (Solo un punto discreto, cero textos delatores)
+    private void actualizarVisualOverlay() {
+        if (modoVinculado) {
+            textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►  ●");
+            textoValorOverlay.setTextColor(Color.parseColor("#00E5FF")); // Celeste suave
+        } else {
+            textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
+            textoValorOverlay.setTextColor(Color.parseColor("#00E676")); // Verde normal
+        }
+        // El subtítulo NUNCA cambia:
+        textoSubtitulo.setText("OK Guardar   •   Atrás Cancelar");
+        textoSubtitulo.setTextColor(Color.LTGRAY);
+    }
+
+    private void modificarLimite(int delta) {
+        limiteTemporal += delta;
+        if (limiteTemporal < 1) limiteTemporal = 1;
+        if (limiteTemporal > 100) limiteTemporal = 100;
+
+        actualizarVisualOverlay();
+
+        if (modoVinculado) {
+            aplicarAudioEnVivo(limiteTemporal);
+        }
+        reiniciarTemporizador();
     }
 
     private void guardarNuevoLimite() {
         SharedPreferences prefs = getSharedPreferences("volume_prefs", Context.MODE_PRIVATE);
         prefs.edit().putInt("max_limit", limiteTemporal).apply();
+
+        if (modoVinculado) {
+            modoVinculado = false;
+            // Regresa al volumen previo respetando el nuevo límite fijado
+            AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                int maximo = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                int nuevoTecho = (limiteTemporal * maximo) / 100;
+                int volumenSeguro = Math.min(volumenPrevioVinculacion, nuevoTecho);
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, volumenSeguro, 0);
+            }
+        }
+
+        cerrarOverlay();
+        forzarLimite();
+    }
+
+    private void cancelarYCerrar() {
+        if (modoVinculado) {
+            desvincularAudio();
+        }
         cerrarOverlay();
         forzarLimite();
     }
@@ -198,101 +326,139 @@ public class VolumeLockService extends AccessibilityService {
         }
     }
 
+    private boolean isChannelDown(int key) {
+        return key == KeyEvent.KEYCODE_CHANNEL_DOWN || key == KeyEvent.KEYCODE_PAGE_DOWN;
+    }
+
+    private boolean isChannelUp(int key) {
+        return key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP;
+    }
+
     @Override
     public boolean onKeyEvent(KeyEvent event) {
         int key = event.getKeyCode();
 
-        // 1. SI LA BARRITA ESTÁ EN PANTALLA:
+        // 1. SI LA BARRITA ESTÁ EN PANTALLA
         if (overlayVisible) {
-            if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                    reiniciarTemporizador();
-                    if (limiteTemporal > 5) limiteTemporal -= 5;
-                    textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                }
-                return true;
-            }
-
-            if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                    reiniciarTemporizador();
-                    if (limiteTemporal < 100) limiteTemporal += 5;
-                    textoValorOverlay.setText("◄   " + limiteTemporal + "%   ►");
-                }
-                return true;
-            }
-
-            if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    guardarNuevoLimite();
-                }
-                return true;
-            }
-        }
-
-        // 2. DETECTOR DE LAS DOS CLAVES (+ - + - + +)
-        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-            long ahora = System.currentTimeMillis();
-            if (ahora - tiempoUltimaTecla > 3500) {
-                indiceFlechas = 0;
-                indiceCanales = 0;
-            }
-            tiempoUltimaTecla = ahora;
-
-            // Clave A: Flechas
-            if (key == KeyEvent.KEYCODE_DPAD_UP || key == KeyEvent.KEYCODE_DPAD_DOWN) {
-                if (key == CODIGO_FLECHAS[indiceFlechas]) {
-                    indiceFlechas++;
-                    if (indiceFlechas == CODIGO_FLECHAS.length) {
-                        indiceFlechas = 0;
-                        indiceCanales = 0;
-                        mostrarOverlay();
-                        return true;
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (isChannelUp(key)) {
+                    chPlusSoltadoTrasAbrir = true;
+                    if (esperandoHoldVincular) {
+                        handler.removeCallbacks(vincularRunnable);
+                        esperandoHoldVincular = false;
                     }
-                } else if (key == KeyEvent.KEYCODE_DPAD_UP) {
-                    indiceFlechas = 1;
-                } else {
-                    indiceFlechas = 0;
                 }
-            }
-
-            // Clave B: Canales
-            int tipoCanal = 0;
-            if (key == KeyEvent.KEYCODE_CHANNEL_UP || key == KeyEvent.KEYCODE_PAGE_UP) {
-                tipoCanal = 1;
-            } else if (key == KeyEvent.KEYCODE_CHANNEL_DOWN || key == KeyEvent.KEYCODE_PAGE_DOWN) {
-                tipoCanal = 2;
-            }
-
-            if (tipoCanal != 0) {
-                if (tipoCanal == CODIGO_CANALES[indiceCanales]) {
-                    indiceCanales++;
-                    if (indiceCanales == CODIGO_CANALES.length) {
-                        indiceCanales = 0;
-                        indiceFlechas = 0;
-                        mostrarOverlay();
-                        return true;
-                    }
-                } else if (tipoCanal == 1) {
-                    indiceCanales = 1;
-                } else {
-                    indiceCanales = 0;
-                }
-            }
-        }
-
-        // 3. BLOQUEO PROACTIVO DE VOLUMEN (Sin latencia de sondeo)
-        if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) {
-            AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
-            if (audioManager != null) {
-                int limite = obtenerLimite();
-                int maximo = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-                int actual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-                int porcentaje = (actual * 100) / maximo;
-
-                if (porcentaje >= limite) {
-                    forzarLimite();
+            } else if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                // Cancelar y salir
+                if (key == KeyEvent.KEYCODE_BACK) {
+                    cancelarYCerrar();
                     return true;
+                }
+
+                // Flechas horizontales (±5%)
+                if (key == KeyEvent.KEYCODE_DPAD_LEFT) {
+                    if (event.getRepeatCount() == 0) modificarLimite(-5);
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                    if (event.getRepeatCount() == 0) modificarLimite(5);
+                    return true;
+                }
+
+                // Flechas verticales (±1% punto a punto)
+                if (key == KeyEvent.KEYCODE_DPAD_DOWN) {
+                    if (event.getRepeatCount() == 0) modificarLimite(-1);
+                    return true;
+                }
+                if (key == KeyEvent.KEYCODE_DPAD_UP) {
+                    if (event.getRepeatCount() == 0) modificarLimite(1);
+                    return true;
+                }
+
+                // Guardar
+                if (key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER) {
+                    guardarNuevoLimite();
+                    return true;
+                }
+
+                // Mantener presionado CH+ por 2s para vincular
+                if (isChannelUp(key)) {
+                    if (chPlusSoltadoTrasAbrir && !modoVinculado && event.getRepeatCount() == 0) {
+                        esperandoHoldVincular = true;
+                        handler.postDelayed(vincularRunnable, 2000);
+                    }
+                    return true;
+                }
+
+                // Un solo toque a CH- desvincula
+                if (isChannelDown(key)) {
+                    if (event.getRepeatCount() == 0 && modoVinculado) {
+                        desvincularAudio();
+                    }
+                    return true;
+                }
+            }
+            return true;
+        }
+
+        // 2. MÁQUINA DE ESTADOS: CH- -> CH- -> Hold CH+ (3s)
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            long ahora = System.currentTimeMillis();
+
+            if (isChannelDown(key)) {
+                if (event.getRepeatCount() == 0) {
+                    if (ahora - tiempoUltimoPaso > 2000) {
+                        pasoClave = 0;
+                    }
+                    tiempoUltimoPaso = ahora;
+
+                    if (pasoClave == 0) {
+                        pasoClave = 1;
+                    } else if (pasoClave == 1) {
+                        pasoClave = 2;
+                    } else {
+                        pasoClave = 1;
+                    }
+                }
+            } else if (isChannelUp(key)) {
+                if (pasoClave == 2 && (ahora - tiempoUltimoPaso <= 2000)) {
+                    if (event.getRepeatCount() == 0) {
+                        esperandoHoldAbrir = true;
+                        handler.postDelayed(abrirOverlayRunnable, 3000);
+                    }
+                    return true;
+                } else {
+                    pasoClave = 0;
+                    handler.removeCallbacks(abrirOverlayRunnable);
+                    esperandoHoldAbrir = false;
+                }
+            } else {
+                pasoClave = 0;
+                handler.removeCallbacks(abrirOverlayRunnable);
+                esperandoHoldAbrir = false;
+            }
+        } else if (event.getAction() == KeyEvent.ACTION_UP) {
+            if (isChannelUp(key) && esperandoHoldAbrir) {
+                handler.removeCallbacks(abrirOverlayRunnable);
+                esperandoHoldAbrir = false;
+                pasoClave = 0;
+            }
+        }
+
+        // 3. FRENO REACTIVO INSTANTÁNEO
+        if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP) {
+            if (!modoVinculado) {
+                AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                if (audioManager != null) {
+                    int limite = obtenerLimite();
+                    int maximo = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                    int actual = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+                    int porcentaje = (actual * 100) / maximo;
+
+                    if (porcentaje >= limite) {
+                        forzarLimite();
+                        return true;
+                    }
                 }
             }
         }
@@ -303,7 +469,9 @@ public class VolumeLockService extends AccessibilityService {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        cerrarOverlay();
+        servicioActivo = false;
+        handler.removeCallbacks(centinelaLoop);
+        cancelarYCerrar();
         try {
             getContentResolver().unregisterContentObserver(volumeObserver);
             unregisterReceiver(volumeReceiver);
